@@ -1,0 +1,11 @@
+{
+  "name": "murmur",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"pnpm --filter murmur-server dev\" \"pnpm --filter murmur-client dev\"",
+    "build": "pnpm --filter murmur-client build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
