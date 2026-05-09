@@ -1,40 +1,33 @@
 # ============================
-# Stage 1: 构建 Client
+# Stage 0: 共享依赖安装（pnpm install 只跑一次）
 # ============================
-FROM node:22-slim AS builder
+FROM node:22-slim AS deps
 
 RUN npm install -g pnpm
 
 WORKDIR /app
 
 # 复制 workspace 配置文件
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
 
 # 安装所有依赖
 RUN pnpm install --frozen-lockfile
 
+# ============================
+# Stage 1: 构建 Client（继承 deps）
+# ============================
+FROM deps AS builder
+
 # 复制 client 源码并构建
 COPY client/ ./client/
 RUN pnpm build
 
 # ============================
-# Stage 2: 运行 Server
+# Stage 2: 运行 Server（继承 deps）
 # ============================
-FROM node:22-slim
-
-RUN npm install -g pnpm
-
-WORKDIR /app
-
-# 复制 workspace 配置文件
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-COPY server/package.json ./server/
-COPY client/package.json ./client/
-
-# 安装依赖（包含 devDeps，因为需要 tsx 运行 TS）
-RUN pnpm install --frozen-lockfile
+FROM deps
 
 # 复制 server 源码
 COPY server/ ./server/
