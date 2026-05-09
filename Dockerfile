@@ -20,6 +20,9 @@ RUN pnpm install --frozen-lockfile
 # ============================
 FROM deps AS builder
 
+# 复制根目录 tsconfig.json（client 构建依赖）
+COPY tsconfig.json ./
+
 # 复制 client 源码并构建
 COPY client/ ./client/
 RUN pnpm build
@@ -46,4 +49,4 @@ VOLUME /app/data
 EXPOSE 3000
 
 # 启动服务
-CMD ["pnpm", "tsx", "server/index.ts"]
+CMD ["pnpm", "--filter", "murmur-server", "exec", "tsx", "index.ts"]
