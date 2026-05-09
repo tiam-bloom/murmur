@@ -1,16 +1,86 @@
+import dotenv from "dotenv";
 import Database from "better-sqlite3";
+import { createClient } from "@libsql/client";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load .env from project root
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
+
 const DB_PATH = path.join(__dirname, "..", "murmur.db");
 
-const db = new Database(DB_PATH);
+const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
 
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+export interface DbResult {
+  lastInsertRowid: number;
+  changes: number;
+}
 
-db.exec(`
+export interface DbInterface {
+  all(sql: string, ...params: any[]): Promise<unknown[]>;
+  get(sql: string, ...params: any[]): Promise<unknown | undefined>;
+  run(sql: string, ...params: any[]): Promise<DbResult>;
+  exec(sql: string): Promise<void>;
+}
+
+const useTurso = Boolean(TURSO_URL && TURSO_TOKEN);
+
+function createLocalDb(): DbInterface {
+  const sqlite = new Database(DB_PATH);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+
+  return {
+    all(sql, ...params) {
+      return Promise.resolve(sqlite.prepare(sql).all(...params));
+    },
+    get(sql, ...params) {
+      return Promise.resolve(sqlite.prepare(sql).get(...params));
+    },
+    run(sql, ...params) {
+      return Promise.resolve(sqlite.prepare(sql).run(...params) as DbResult);
+    },
+    exec(sql) {
+      sqlite.exec(sql);
+      return Promise.resolve();
+    },
+  };
+}
+
+function createTursoDb(): DbInterface {
+  const client = createClient({
+    url: TURSO_URL!,
+    authToken: TURSO_TOKEN!,
+  });
+
+  return {
+    async all(sql, ...params) {
+      const rs = await client.execute({ sql, args: params });
+      return Array.from(rs.rows);
+    },
+    async get(sql, ...params) {
+      const rs = await client.execute({ sql, args: params });
+      return rs.rows[0];
+    },
+    async run(sql, ...params) {
+      const rs = await client.execute({ sql, args: params });
+      return {
+        lastInsertRowid: Number(rs.lastInsertRowid ?? 0),
+        changes: rs.rowsAffected,
+      };
+    },
+    async exec(sql) {
+      await client.executeMultiple(sql);
+    },
+  };
+}
+
+const db: DbInterface = useTurso ? createTursoDb() : createLocalDb();
+
+const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS posts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fingerprint_hash TEXT NOT NULL,
@@ -29,8 +99,6 @@ db.exec(`
     content TEXT NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
-
-  ALTER TABLE replies ADD COLUMN reply_to_name TEXT;
 
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +120,30 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_hash, created_at);
   CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
   CREATE INDEX IF NOT EXISTS idx_messages_from_name ON messages(from_name);
-`);
+`;
+
+export async function initDb(): Promise<void> {
+  const label = useTurso
+    ? `Turso: ${TURSO_URL}`
+    : `local SQLite: ${DB_PATH}`;
+  console.log(`Using ${label}`);
+
+  try {
+    await db.exec(SCHEMA_SQL);
+  } catch (err: any) {
+    console.error(`Failed to initialize ${label}`);
+    if (useTurso) {
+      console.error("Check that TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are correct, and the database is reachable.");
+    }
+    throw err;
+  }
+
+  // One-time migration: add reply_to_name column
+  try {
+    await db.exec("ALTER TABLE replies ADD COLUMN reply_to_name TEXT");
+  } catch {
+    // Column already exists
+  }
+}
 
 export default db;

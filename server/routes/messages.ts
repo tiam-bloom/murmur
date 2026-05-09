@@ -8,24 +8,21 @@ const messages = new Hono();
 messages.use("*", requireFingerprint);
 
 // Resolve display_name to fingerprint_hash (most recent match)
-function resolveDisplayName(name: string): string | null {
-  const fromPosts = db
-    .prepare(
-      "SELECT fingerprint_hash, MAX(created_at) as latest FROM posts WHERE display_name = ?"
-    )
-    .get(name) as { fingerprint_hash: string; latest: number | null } | undefined;
+async function resolveDisplayName(name: string): Promise<string | null> {
+  const fromPosts = (await db.get(
+    "SELECT fingerprint_hash, MAX(created_at) as latest FROM posts WHERE display_name = ?",
+    name
+  )) as { fingerprint_hash: string; latest: number | null } | undefined;
 
-  const fromReplies = db
-    .prepare(
-      "SELECT fingerprint_hash, MAX(created_at) as latest FROM replies WHERE display_name = ?"
-    )
-    .get(name) as { fingerprint_hash: string; latest: number | null } | undefined;
+  const fromReplies = (await db.get(
+    "SELECT fingerprint_hash, MAX(created_at) as latest FROM replies WHERE display_name = ?",
+    name
+  )) as { fingerprint_hash: string; latest: number | null } | undefined;
 
-  const fromMessages = db
-    .prepare(
-      "SELECT from_hash as fingerprint_hash, MAX(created_at) as latest FROM messages WHERE from_name = ?"
-    )
-    .get(name) as { fingerprint_hash: string; latest: number | null } | undefined;
+  const fromMessages = (await db.get(
+    "SELECT from_hash as fingerprint_hash, MAX(created_at) as latest FROM messages WHERE from_name = ?",
+    name
+  )) as { fingerprint_hash: string; latest: number | null } | undefined;
 
   if (!fromPosts?.latest && !fromReplies?.latest && !fromMessages?.latest) return null;
 
@@ -39,40 +36,42 @@ function resolveDisplayName(name: string): string | null {
 }
 
 // GET /api/messages — list conversations
-messages.get("/", (c) => {
+messages.get("/", async (c) => {
   const fp = c.get("fingerprint") as string;
-  const conversations = db
-    .prepare(
-      `SELECT
-         other_hash,
-         other_name,
-         last_message,
-         last_time,
-         (SELECT COUNT(*) FROM messages m2
-          WHERE m2.to_hash = ? AND m2.from_hash = conv.other_hash AND m2.read = 0) as unread_count
+
+  const conversations = await db.all(
+    `SELECT
+       other_hash,
+       other_name,
+       last_message,
+       last_time,
+       (SELECT COUNT(*) FROM messages m2
+        WHERE m2.to_hash = ? AND m2.from_hash = conv.other_hash AND m2.read = 0) as unread_count
+     FROM (
+       SELECT *,
+              ROW_NUMBER() OVER (PARTITION BY other_hash ORDER BY last_time DESC) as rn
        FROM (
-         SELECT *,
-                ROW_NUMBER() OVER (PARTITION BY other_hash ORDER BY last_time DESC) as rn
-         FROM (
-           SELECT to_hash as other_hash, to_name as other_name,
-                  content as last_message, created_at as last_time
-           FROM messages WHERE from_hash = ?
-           UNION ALL
-           SELECT from_hash as other_hash, from_name as other_name,
-                  content as last_message, created_at as last_time
-           FROM messages WHERE to_hash = ?
-         )
-       ) conv
-       WHERE rn = 1
-       ORDER BY last_time DESC`
-    )
-    .all(fp, fp, fp);
+         SELECT to_hash as other_hash, to_name as other_name,
+                content as last_message, created_at as last_time
+         FROM messages WHERE from_hash = ?
+         UNION ALL
+         SELECT from_hash as other_hash, from_name as other_name,
+                content as last_message, created_at as last_time
+         FROM messages WHERE to_hash = ?
+       )
+     ) conv
+     WHERE rn = 1
+     ORDER BY last_time DESC`,
+    fp,
+    fp,
+    fp
+  );
 
   return c.json({ conversations });
 });
 
 // GET /api/messages/conversation/:fingerprint
-messages.get("/conversation/:fingerprint", (c) => {
+messages.get("/conversation/:fingerprint", async (c) => {
   const fp = c.get("fingerprint") as string;
   const otherFp = c.req.param("fingerprint");
 
@@ -81,63 +80,69 @@ messages.get("/conversation/:fingerprint", (c) => {
   }
 
   // Mark messages as read
-  db.prepare(
-    "UPDATE messages SET read = 1 WHERE to_hash = ? AND from_hash = ? AND read = 0"
-  ).run(fp, otherFp);
+  await db.run(
+    "UPDATE messages SET read = 1 WHERE to_hash = ? AND from_hash = ? AND read = 0",
+    fp,
+    otherFp
+  );
 
-  const msgs = db
-    .prepare(
-      `SELECT * FROM messages
-       WHERE (from_hash = ? AND to_hash = ?)
-          OR (from_hash = ? AND to_hash = ?)
-       ORDER BY created_at ASC`
-    )
-    .all(fp, otherFp, otherFp, fp);
+  const msgs = await db.all(
+    `SELECT * FROM messages
+     WHERE (from_hash = ? AND to_hash = ?)
+        OR (from_hash = ? AND to_hash = ?)
+     ORDER BY created_at ASC`,
+    fp,
+    otherFp,
+    otherFp,
+    fp
+  );
 
   return c.json({ messages: msgs });
 });
 
 // POST /api/messages — send message
-messages.post("/", (c) => c.req.json().then((body) => {
-    const fp = c.get("fingerprint") as string;
-    const { to_name, content, from_name } = body;
+messages.post("/", async (c) => {
+  const fp = c.get("fingerprint") as string;
+  const body = await c.req.json();
+  const { to_name, content, from_name } = body;
 
-    if (typeof to_name !== "string" || !to_name.trim()) {
-      return c.json({ error: "Recipient name is required" }, 400);
-    }
-    if (typeof content !== "string" || !content.trim()) {
-      return c.json({ error: "Content is required" }, 400);
-    }
-    if (typeof from_name !== "string" || !from_name.trim()) {
-      return c.json({ error: "Sender name is required" }, 400);
-    }
+  if (typeof to_name !== "string" || !to_name.trim()) {
+    return c.json({ error: "Recipient name is required" }, 400);
+  }
+  if (typeof content !== "string" || !content.trim()) {
+    return c.json({ error: "Content is required" }, 400);
+  }
+  if (typeof from_name !== "string" || !from_name.trim()) {
+    return c.json({ error: "Sender name is required" }, 400);
+  }
 
-    const toFp = resolveDisplayName(to_name.trim());
-    if (!toFp) {
-      return c.json({ error: "Recipient not found" }, 404);
-    }
-    if (toFp === fp) {
-      return c.json({ error: "Cannot send message to yourself" }, 400);
-    }
+  const toFp = await resolveDisplayName(to_name.trim());
+  if (!toFp) {
+    return c.json({ error: "Recipient not found" }, 404);
+  }
+  if (toFp === fp) {
+    return c.json({ error: "Cannot send message to yourself" }, 400);
+  }
 
-    const result = db
-      .prepare(
-        "INSERT INTO messages (from_hash, to_hash, from_name, to_name, content) VALUES (?, ?, ?, ?, ?)"
-      )
-      .run(fp, toFp, from_name.trim(), to_name.trim(), content.trim());
+  const result = await db.run(
+    "INSERT INTO messages (from_hash, to_hash, from_name, to_name, content) VALUES (?, ?, ?, ?, ?)",
+    fp,
+    toFp,
+    from_name.trim(),
+    to_name.trim(),
+    content.trim()
+  );
 
-    const msg = db.prepare("SELECT * FROM messages WHERE id = ?").get(
-      result.lastInsertRowid as number
-    );
+  const msg = await db.get("SELECT * FROM messages WHERE id = ?", result.lastInsertRowid);
 
-    connectionManager.sendToUser(toFp, { type: "new_message", message: msg });
-    connectionManager.sendToUser(fp, { type: "new_message", message: msg });
+  connectionManager.sendToUser(toFp, { type: "new_message", message: msg });
+  connectionManager.sendToUser(fp, { type: "new_message", message: msg });
 
-    return c.json(msg, 201);
-  }));
+  return c.json(msg, 201);
+});
 
 // DELETE /api/messages/conversation/:fingerprint — delete conversation
-messages.delete("/conversation/:fingerprint", (c) => {
+messages.delete("/conversation/:fingerprint", async (c) => {
   const fp = c.get("fingerprint") as string;
   const otherFp = c.req.param("fingerprint");
 
@@ -145,11 +150,15 @@ messages.delete("/conversation/:fingerprint", (c) => {
     return c.json({ error: "Invalid fingerprint" }, 400);
   }
 
-  db.prepare(
+  await db.run(
     `DELETE FROM messages
      WHERE (from_hash = ? AND to_hash = ?)
-        OR (from_hash = ? AND to_hash = ?)`
-  ).run(fp, otherFp, otherFp, fp);
+        OR (from_hash = ? AND to_hash = ?)`,
+    fp,
+    otherFp,
+    otherFp,
+    fp
+  );
 
   return c.json({ ok: true });
 });

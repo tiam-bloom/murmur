@@ -5,6 +5,7 @@ import { createAdaptorServer } from "@hono/node-server";
 import posts from "./routes/posts.js";
 import replies from "./routes/replies.js";
 import messages from "./routes/messages.js";
+import { initDb } from "./db.js";
 import { startCleanupJob } from "./cleanup.js";
 import { setupWebSocket } from "./ws.js";
 
@@ -20,6 +21,7 @@ app.route("/api/messages", messages);
 // Health check
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 
+await initDb();
 startCleanupJob();
 
 const server = createAdaptorServer({ fetch: app.fetch, port: 3000 });
