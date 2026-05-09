@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Load .env from project root
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
-const DB_PATH = path.join(__dirname, "..", "murmur.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "murmur.db");
 
 const TURSO_URL = process.env.TURSO_DATABASE_URL;
 const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
@@ -123,9 +123,7 @@ const SCHEMA_SQL = `
 `;
 
 export async function initDb(): Promise<void> {
-  const label = useTurso
-    ? `Turso: ${TURSO_URL}`
-    : `local SQLite: ${DB_PATH}`;
+  const label = useTurso ? `Turso: ${TURSO_URL}` : `local SQLite: ${DB_PATH}`;
   console.log(`Using ${label}`);
 
   try {
@@ -133,7 +131,9 @@ export async function initDb(): Promise<void> {
   } catch (err: any) {
     console.error(`Failed to initialize ${label}`);
     if (useTurso) {
-      console.error("Check that TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are correct, and the database is reachable.");
+      console.error(
+        "Check that TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are correct, and the database is reachable.",
+      );
     }
     throw err;
   }

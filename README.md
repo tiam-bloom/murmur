@@ -17,7 +17,7 @@ Murmur 是一个匿名低语论坛。所有内容只存在 24 小时，一切信
 | 层 | 技术 |
 |----|------|
 | 前端 | React 19 + Vite + TypeScript |
-| 后端 | Hono + better-sqlite3 |
+| 后端 | Hono + Turso / SQLite |
 | 实时通信 | WebSocket (ws) |
 | 身份 | FingerprintJS (浏览器指纹) |
 | 包管理 | pnpm monorepo |
@@ -41,6 +41,48 @@ pnpm dev
 pnpm dev      # 启动开发环境
 pnpm build    # 构建前端
 ```
+
+## Docker 部署
+
+### 构建镜像
+
+```bash
+docker build -t murmur .
+```
+
+### 运行容器
+
+**使用本地 SQLite（数据存储在本地卷）：**
+
+```bash
+docker run -d \
+  --name murmur \
+  -p 3000:3000 \
+  -v murmur-data:/app/data \
+  murmur
+```
+
+**使用 Turso 远程数据库：**
+
+```bash
+docker run -d \
+  --name murmur \
+  -p 3000:3000 \
+  -e TURSO_DATABASE_URL=libsql://your-db.turso.io \
+  -e TURSO_AUTH_TOKEN=your-auth-token \
+  murmur
+```
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `TURSO_DATABASE_URL` | Turso 数据库地址 | 无（使用本地 SQLite） |
+| `TURSO_AUTH_TOKEN` | Turso 认证令牌 | 无 |
+| `DB_PATH` | 本地 SQLite 数据库路径 | `/app/data/murmur.db`（Docker） |
+| `NODE_ENV` | 运行环境 | `production`（Docker） |
+
+> **注意：** 如果同时设置了 `TURSO_DATABASE_URL` 和 `TURSO_AUTH_TOKEN`，将优先使用 Turso 远程数据库；否则使用本地 SQLite。
 
 ## 项目结构
 
