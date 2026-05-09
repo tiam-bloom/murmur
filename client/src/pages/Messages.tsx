@@ -23,7 +23,7 @@ export default function MessagesPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgsLoading, setMsgsLoading] = useState(false);
 
-  // New message form
+  // New message form (only used when no existing conversation with prefillTo)
   const [showNewForm, setShowNewForm] = useState(false);
 
   const fetchConversations = async () => {
@@ -55,11 +55,24 @@ export default function MessagesPage() {
     fetchConversations();
   }, []);
 
+  // When conversations loaded and ?to= is set, auto-open existing conversation
+  useEffect(() => {
+    if (!prefillTo || loading || selectedFp) return;
+    const existing = conversations.find((c) => c.other_name === prefillTo);
+    if (existing) {
+      openConversation(existing);
+    } else {
+      setShowNewForm(true);
+    }
+  }, [prefillTo, loading, conversations]);
+
   useEffect(() => {
     const unsub = ws.on("new_message", (data: unknown) => {
       const msg = (data as { message: Message }).message;
-      const otherFp = msg.from_hash === fingerprint ? msg.to_hash : msg.from_hash;
-      const otherName = msg.from_hash === fingerprint ? msg.to_name : msg.from_name;
+      const otherFp =
+        msg.from_hash === fingerprint ? msg.to_hash : msg.from_hash;
+      const otherName =
+        msg.from_hash === fingerprint ? msg.to_name : msg.from_name;
 
       setConversations((prev) => {
         const filtered = prev.filter((c) => c.other_hash !== otherFp);
@@ -94,8 +107,8 @@ export default function MessagesPage() {
     // Update unread locally
     setConversations((prev) =>
       prev.map((c) =>
-        c.other_hash === conv.other_hash ? { ...c, unread_count: 0 } : c
-      )
+        c.other_hash === conv.other_hash ? { ...c, unread_count: 0 } : c,
+      ),
     );
   };
 
@@ -117,16 +130,46 @@ export default function MessagesPage() {
           ← 返回私信列表
         </button>
 
-        <h2 style={{ color: getColorFromName(selectedName), margin: "0 0 16px", fontSize: 18 }}>
-          {selectedName}
-        </h2>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            margin: "0 0 16px",
+          }}
+        >
+          <span
+            className="user-dot"
+            style={{
+              background: getColorFromName(selectedName),
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              display: "inline-block",
+            }}
+          />
+          <h2
+            style={{
+              color: getColorFromName(selectedName),
+              margin: 0,
+              fontSize: 18,
+            }}
+          >
+            {selectedName}
+          </h2>
+          <span style={{ color: "#666", fontSize: 13 }}>· 私信对话</span>
+        </div>
 
         {msgsLoading && (
-          <p style={{ color: "#666", textAlign: "center", padding: 20 }}>加载中...</p>
+          <p style={{ color: "#666", textAlign: "center", padding: 20 }}>
+            加载中...
+          </p>
         )}
 
         {!msgsLoading && messages.length === 0 && (
-          <p style={{ color: "#666", textAlign: "center", padding: 20 }}>暂无消息。</p>
+          <p style={{ color: "#666", textAlign: "center", padding: 20 }}>
+            暂无消息。
+          </p>
         )}
 
         <div className="message-list">
@@ -138,7 +181,9 @@ export default function MessagesPage() {
                 className={`message-bubble ${isMine ? "mine" : "theirs"}`}
               >
                 <div className="message-content">{msg.content}</div>
-                <div className="message-time">{formatRelativeTime(msg.created_at)}</div>
+                <div className="message-time">
+                  {formatRelativeTime(msg.created_at)}
+                </div>
               </div>
             );
           })}
@@ -166,6 +211,32 @@ export default function MessagesPage() {
 
       {showNewForm && (
         <div className="card" style={{ marginBottom: 16 }}>
+          {prefillTo && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 12,
+              }}
+            >
+              <span
+                className="user-dot"
+                style={{
+                  background: getColorFromName(prefillTo),
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  display: "inline-block",
+                }}
+              />
+              <span
+                style={{ color: getColorFromName(prefillTo), fontWeight: 500 }}
+              >
+                发送给 {prefillTo}
+              </span>
+            </div>
+          )}
           <MessageForm
             prefillRecipient={prefillTo}
             onMessageSent={() => {
@@ -185,7 +256,11 @@ export default function MessagesPage() {
         </div>
       )}
 
-      {loading && <p style={{ color: "#666", textAlign: "center", padding: 40 }}>加载中...</p>}
+      {loading && (
+        <p style={{ color: "#666", textAlign: "center", padding: 40 }}>
+          加载中...
+        </p>
+      )}
 
       {!loading && conversations.length === 0 && !error && (
         <div style={{ textAlign: "center", padding: 40 }}>
@@ -235,7 +310,7 @@ export default function MessagesPage() {
                   try {
                     await api.deleteConversation(conv.other_hash);
                     setConversations((prev) =>
-                      prev.filter((c) => c.other_hash !== conv.other_hash)
+                      prev.filter((c) => c.other_hash !== conv.other_hash),
                     );
                   } catch (err) {
                     console.error("Failed to delete conversation:", err);
